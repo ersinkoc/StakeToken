@@ -48,6 +48,10 @@ contract StakeToken is Ownable, Stakeable{
     return _balances[account];
   }
 
+  function getOwner() external view returns (address) {
+    return owner();
+  }
+
   function _mint(address account, uint256 amount) internal {
     require(account != address(0), "StakeToken: cannot mint to zero address");
     _totalSupply = _totalSupply + (amount);
@@ -64,11 +68,13 @@ contract StakeToken is Ownable, Stakeable{
   }
   
   function burn(address account, uint256 amount) public onlyOwner returns(bool) {
+    require(amount > 0, "StakeToken: cannot burn zero token");
     _burn(account, amount);
     return true;
   }
 
   function mint(address account, uint256 amount) public onlyOwner returns(bool){
+    require(amount > 0, "StakeToken: cannot mint zero token");
     _mint(account, amount);
     return true;
   }
@@ -85,10 +91,6 @@ contract StakeToken is Ownable, Stakeable{
     _balances[sender] = _balances[sender] - amount;
     _balances[recipient] = _balances[recipient] + amount;
     emit Transfer(sender, recipient, amount);
-  }
-
-  function getOwner() external view returns (address) {
-    return owner();
   }
 
   function allowance(address owner, address spender) external view returns(uint256){
@@ -124,18 +126,26 @@ contract StakeToken is Ownable, Stakeable{
     return true;
   }
 
-  function changeReward(uint day, uint256 reward) public onlyOwner returns(bool) {
-    require(day > 0 , "StakeToken: Day not valid");
-    require(reward > 0 , "StakeToken: Reward not valid");
-    _changeReward(day, reward);
-    return true;
+  function getRewardByDays(uint _days) public view returns(uint256){
+      return rewards[_days];
+  } 
+
+  function changeReward(uint _days, uint256 _reward) public onlyOwner returns(bool) {
+    if (_checkValidDays(_days)){
+      require(_reward > 0 , "StakeToken: Reward not valid");
+      _changeReward(_days, _reward);
+      return true;
+    }
+    return false;
   }
 
   function stake(uint256 _amount, uint256 _days) public {
     require(_amount < _balances[msg.sender], "StakeToken: Cannot stake more than you own");
     require(_days > 0, "StakeToken: Cannot stake for 0 days");
+    if (_checkValidDays(_days)) {
       _stake(_amount, _days);
       _burn(msg.sender, _amount);
+    }
   }
 
   function withdrawStake(uint256 amount, uint256 stake_index)  public {
@@ -143,4 +153,13 @@ contract StakeToken is Ownable, Stakeable{
     _mint(msg.sender, amount_to_mint);
   }
 
+  function withdrawAllStakes(bool _notcompleted) public {
+    uint256 amount_to_mint = _withdrawAllStakes(_notcompleted);
+    _mint(msg.sender, amount_to_mint);
+  }
+
+  function _checkValidDays(uint256 _days) internal pure returns(bool) {
+    if (_days == 7 || _days == 30 || _days == 60 || _days == 90 || _days == 180 || _days == 360) return true;
+    return false;
+  }
 }

@@ -8,6 +8,7 @@ contract Stakeable is Ownable {
         stakeholders.push();
         rewards[7] = 134;
         rewards[30] = 625;
+        rewards[60] = 1500;
         rewards[90] = 2450;
         rewards[180] = 7200;
         rewards[360] = 19400;
@@ -20,7 +21,7 @@ contract Stakeable is Ownable {
         uint256 amount;
         uint256 since;
         uint256 reward;
-        uint256 howmanydays;
+        uint256 fordays;
         uint256 claimable;
     }
     struct Stakeholder{
@@ -37,7 +38,7 @@ contract Stakeable is Ownable {
 
     mapping(address => uint256) internal stakes;
 
-    event Staked(address indexed user, uint256 amount, uint256 index, uint256 timestamp, uint howmanydays);
+    event Staked(address indexed user, uint256 amount, uint256 index, uint256 timestamp, uint fordays);
 
     function _changeReward(uint _day, uint256 _reward) internal {
         rewards[_day] = _reward;
@@ -50,16 +51,16 @@ contract Stakeable is Ownable {
         return userIndex; 
     }
 
-    function _stake(uint256 _amount, uint _howmanydays) internal{
+    function _stake(uint256 _amount, uint _fordays) internal{
         require(_amount > 0, "Cannot stake nothing");
-        require(_howmanydays > 0, "Cannot stake for 0 day");
+        require(_fordays > 0, "Cannot stake for 0 day");
 
-        uint howmanydays = 1;
+        uint fordays = 1;
         uint256 reward = 0;
 
-        if(rewards[_howmanydays]>0){
-            howmanydays = _howmanydays;
-            reward = rewards[_howmanydays];
+        if(rewards[_fordays]>0){
+            fordays = _fordays;
+            reward = rewards[_fordays];
         }
 
         uint256 index = stakes[msg.sender];
@@ -69,8 +70,8 @@ contract Stakeable is Ownable {
             index = _addStakeholder(msg.sender);
         }
 
-        stakeholders[index].address_stakes.push(Stake(msg.sender, _amount, timestamp, reward, howmanydays, 0));
-        emit Staked(msg.sender, _amount, index, timestamp, howmanydays);
+        stakeholders[index].address_stakes.push(Stake(msg.sender, _amount, timestamp, reward, fordays, 0));
+        emit Staked(msg.sender, _amount, index, timestamp, fordays);
     }
 
     function calculateStakeReward(Stake memory _current_stake) internal view returns(uint256){
@@ -78,12 +79,12 @@ contract Stakeable is Ownable {
         uint256 calculatedhours = (block.timestamp - _current_stake.since) / 1 hours;
 
         // If the locked day is passed
-        if (calculatedhours >= (_current_stake.howmanydays * 24) ){
+        if (calculatedhours >= (_current_stake.fordays * 24) ){
             return (_current_stake.amount * _current_stake.reward / 10000);
         }
 
         // if half of the locked days are passed, %10 percent of the expected interest.
-        if (calculatedhours >= (_current_stake.howmanydays * 12) ){
+        if (calculatedhours >= (_current_stake.fordays * 12) ){
             return (_current_stake.amount * _current_stake.reward / 100000);
         }
 
@@ -110,6 +111,33 @@ contract Stakeable is Ownable {
         return amount+reward;
     }
 
+    function _withdrawAllStakes(bool _notcompleted) internal returns(uint256){
+        uint256 amount = 0;
+        uint256 calculatedhours = 0;
+        bool canWithdrawable = false;
+        StakingSummary memory summary = StakingSummary(0, stakeholders[stakes[msg.sender]].address_stakes);
+        for (uint256 s = 0; s < summary.stakes.length; s += 1){
+            canWithdrawable = false;
+            if(summary.stakes[s].amount>0) {
+
+                calculatedhours = (block.timestamp - summary.stakes[s].since) / 1 hours;
+                
+                // Completed
+                if(calculatedhours >= (summary.stakes[s].fordays * 24)) canWithdrawable = true;
+                
+                // not completed but user wants withdraw
+                if(_notcompleted) canWithdrawable = true;
+                
+                if(canWithdrawable) {
+                        amount += summary.stakes[s].amount + calculateStakeReward(summary.stakes[s]);
+                        delete stakeholders[stakes[msg.sender]].address_stakes[s];
+                }    
+            }
+        }
+        summary.total_amount = amount;
+        return amount;
+    }
+
     function hasStake(address _staker) public view returns(StakingSummary memory){
         uint256 totalStakeAmount; 
         StakingSummary memory summary = StakingSummary(0, stakeholders[stakes[_staker]].address_stakes);
@@ -121,5 +149,7 @@ contract Stakeable is Ownable {
         summary.total_amount = totalStakeAmount;
         return summary;
     }
+
+
 
 }
