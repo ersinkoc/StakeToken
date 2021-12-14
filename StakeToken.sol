@@ -10,6 +10,7 @@ contract StakeToken is Ownable, Stakeable{
   using SafeMath for uint;
 
   mapping(address  => uint) public balances;
+
   uint public totalDeposited;
   mapping (address => uint) balance;
 
@@ -142,7 +143,7 @@ contract StakeToken is Ownable, Stakeable{
   }
 
   function getRewardByDays(uint _days) public view returns(uint256){
-      uint256 factor = getInterestRateToday();
+      uint256 factor = getRewardRate(block.timestamp);
       return rewards[_days] * factor / 10000;
   } 
 
@@ -184,7 +185,6 @@ contract StakeToken is Ownable, Stakeable{
     canStake(msg.sender, _amount);
     _stake(_amount, 99999999);
     _burn(msg.sender, _amount);
-    
   }
 
 
@@ -223,7 +223,9 @@ contract StakeToken is Ownable, Stakeable{
 
   function canStake(address _staker, uint256 _amount) internal view returns(bool){
     
-    require(totalStakeCheck(_staker) + _amount <= _tokenPerCoin * _stakeCoinLimit, "You cannot stake more than our imits");
+    uint256 totalStakedByUser = getStaked(_staker); // totalStakeCheck(_staker)
+    
+    require(totalStakedByUser + _balances[_staker] + _amount <= _tokenPerCoin * _stakeCoinLimit, "You cannot stake more than our imits");
 
     return true;
   }
@@ -239,7 +241,8 @@ contract StakeToken is Ownable, Stakeable{
 
   function depositCoin() public payable {
     
-    require(msg.value > 0 && msg.value < _stakeCoinLimit , "Limit Reached!");
+    require(msg.value > 0, "Zero Balance") ;
+    require(msg.value <= _stakeCoinLimit , "Limit Reached!");
 
     canStake(msg.sender, msg.value * _tokenPerCoin);
 
@@ -252,14 +255,13 @@ contract StakeToken is Ownable, Stakeable{
       uint256 token = msg.value * _tokenPerCoin ;
 
       // Minted 1/2 tokens to sender's address
-      _mint(msg.sender, token /2 );
+      _mint(msg.sender, token * 50 / 100 );
 
       // Staked 1/2 tokens for rewards
-      _stake(token / 2 , 99999999);
+      _stake(token * 50 / 100 , 99999999);
+
     }
   }
-
-
 
   // function withdrawCoin(uint _amount) internal  {
   //   require(balances[msg.sender] >= _amount);

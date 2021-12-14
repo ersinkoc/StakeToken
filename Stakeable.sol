@@ -24,6 +24,7 @@ contract Stakeable is Ownable {
     uint256 public startingBlockTimeStamp;
     uint256 public stakeLimitPerWallet = 0;
 
+    mapping(address  => uint256) public alreadystaked;
 
     mapping(uint => uint256) internal rewards;
 
@@ -91,6 +92,9 @@ contract Stakeable is Ownable {
 
         stakeholders[index].address_stakes.push(Stake(msg.sender, _amount, timestamp, reward, fordays, 0));
         currentStaked += _amount;
+
+        addStaked(msg.sender, _amount);
+
         emit Staked(msg.sender, _amount, index, timestamp, fordays);
     }
 
@@ -120,6 +124,10 @@ contract Stakeable is Ownable {
                     reward = reward * rewardPerHour / 1000000;
                 }
             }
+            else
+            {
+                return 0;
+            }
             
             //
             uint256 interestRate = getRewardRate(_current_stake.since);
@@ -138,6 +146,9 @@ contract Stakeable is Ownable {
         current_stake.amount = current_stake.amount - amount;
 
         currentStaked -= amount;
+
+        removeStaked(msg.sender, amount);
+
         totalRewards += reward;
 
         if(current_stake.amount == 0){
@@ -171,6 +182,9 @@ contract Stakeable is Ownable {
                 if(canWithdrawable) {
                         uint256 reward = calculateStakeReward(summary.stakes[s]);
                         currentStaked -= summary.stakes[s].amount;
+
+                        removeStaked(msg.sender, summary.stakes[s].amount);
+
                         totalRewards += reward;
                         totalWithdraw = totalWithdraw + summary.stakes[s].amount + reward;
                         delete stakeholders[stakes[msg.sender]].address_stakes[s];
@@ -222,5 +236,17 @@ contract Stakeable is Ownable {
             factor = 6350;
         } 
         return factor;
+    }
+
+    function addStaked(address _staker, uint256 _amount) internal {
+            alreadystaked[_staker] += _amount;
+    }
+
+    function removeStaked(address _staker, uint256 _amount) internal {
+            alreadystaked[_staker] -= _amount;
+    }
+
+    function getStaked(address _staker) internal view returns(uint256){
+        return alreadystaked[_staker];
     }
 }
