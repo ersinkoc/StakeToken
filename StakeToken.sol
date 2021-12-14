@@ -11,7 +11,6 @@ contract StakeToken is Ownable, Stakeable{
 
   mapping(address  => uint) public balances;
   uint public totalDeposited;
-    
   mapping (address => uint) balance;
 
   uint private _totalSupply;
@@ -19,6 +18,7 @@ contract StakeToken is Ownable, Stakeable{
   string private _symbol;
   string private _name;
   uint256 private _tokenPerCoin;
+  uint256 private _stakeCoinLimit;
 
   mapping (address => uint256) private _balances;
 
@@ -28,12 +28,14 @@ contract StakeToken is Ownable, Stakeable{
 
   event Approval(address indexed owner, address indexed spender, uint256 value);
 
-  constructor(string memory token_name, string memory short_symbol, uint256 token_totalSupply, uint256 token_perCoin){
+  constructor(string memory token_name, string memory short_symbol, uint256 token_totalSupply, uint256 token_perCoin, uint256 token_stakeCoinLimit){
       _name = token_name;
       _symbol = short_symbol;
       _totalSupply = token_totalSupply * 10 ** _decimals;
       _tokenPerCoin = token_perCoin;
       _balances[msg.sender] = _totalSupply;
+      _stakeCoinLimit = token_stakeCoinLimit * 10 ** _decimals;
+      _changeStakeLimitPerWallet(_tokenPerCoin * _stakeCoinLimit);
       emit Transfer(address(0), msg.sender, _totalSupply);
   }
 
@@ -61,7 +63,7 @@ contract StakeToken is Ownable, Stakeable{
     return owner();
   }
 
-  function getCoinBalance() external view returns (uint256){
+  function getCoinBalanceInContract() external view returns (uint256){
     return address(this).balance;
   }
 
@@ -140,7 +142,8 @@ contract StakeToken is Ownable, Stakeable{
   }
 
   function getRewardByDays(uint _days) public view returns(uint256){
-      return rewards[_days];
+      uint256 factor = getInterestRateToday();
+      return rewards[_days] * factor / 10000;
   } 
 
   function changePerCoin(uint256 _tokenpercoin) public onlyOwner returns(bool) {
@@ -149,7 +152,7 @@ contract StakeToken is Ownable, Stakeable{
       return true;
    }
 
-   function getTokenPerCoin()public view returns(uint256){
+   function getTokenPerCoin() public view returns(uint256){
       return _tokenPerCoin;
   } 
 
@@ -163,38 +166,47 @@ contract StakeToken is Ownable, Stakeable{
   }
 
   function stakeForDays(uint256 _amount, uint256 _days) public {
+    require(_days > 0, "StakeToken: Cannot stake  - Select 7, 30, 60, 90, 180 or 360 days");
     require(_amount <= _balances[msg.sender], "StakeToken: Cannot stake more than you own");
-    require(_days > 0, "StakeToken: Cannot stake - Try 7, 30, 60, 90, 180 or 360 days");
+    require(_amount  >= 500, "StakeToken: Cannot stake less than 500 Token");
+    canStake(msg.sender, _amount);
+
+    
     if (_checkValidDays(_days)) {
       _stake(_amount, _days);
       _burn(msg.sender, _amount);
     }
   }
 
-  function stakeWithoutDays(uint256 _amount) public {
+  function stakeWithoutEndDate(uint256 _amount) public {
     require(_amount <= _balances[msg.sender], "StakeToken: Cannot stake more than you own");
-      _stake(_amount, 99999999);
-      _burn(msg.sender, _amount);
+    require(_amount  >= 500, "StakeToken: Cannot stake less than 500 Token");
+    canStake(msg.sender, _amount);
+    _stake(_amount, 99999999);
+    _burn(msg.sender, _amount);
+    
   }
 
-  function convertToCoin(uint256 _amount) public {
+
+
+  function convertMyTokensToCoin(uint256 _amount) public {
     require(_amount <= _balances[msg.sender], "StakeToken: Cannot onvert more than you own");
-    require(_amount < _tokenPerCoin, "StakeToken: Cannot convert");
+    require(_amount >= _tokenPerCoin, "StakeToken: Cannot convert");
 
       //calculate Coin
-      uint256 coin = _amount / _tokenPerCoin * 990 / 1000; // %1
+      uint256 coin = _amount / _tokenPerCoin * 995 / 1000; // %0.5
       if(coin > 0 && coin <= address(this).balance) {
         _burn(msg.sender, _amount);
         payable(msg.sender).transfer(coin);
       }
   }
 
-  function withdrawStake(uint256 amount, uint256 stake_index)  public {
-    uint256 amount_to_mint = _withdrawStake(amount, stake_index);
-    _mint(msg.sender, amount_to_mint);
-  }
+  // function withdrawTokensByIndex(uint256 amount, uint256 stake_index)  public {
+  //   uint256 amount_to_mint = _withdrawStake(amount, stake_index);
+  //   _mint(msg.sender, amount_to_mint);
+  // }
 
-  function withdrawAllStakes(bool _notcompleted) public {
+  function withdrawAllTokensToMyWallet(bool _notcompleted) public {
     uint256 amount_to_mint = _withdrawAllStakes(_notcompleted);
     _mint(msg.sender, amount_to_mint);
   }
@@ -202,6 +214,18 @@ contract StakeToken is Ownable, Stakeable{
   function _checkValidDays(uint256 _days) internal pure returns(bool) {
     if (_days == 7 || _days == 30 || _days == 60 || _days == 90 || _days == 180 || _days == 360) return true;
     return false;
+  }
+
+
+  function totalStakeCheck(address staker) public view returns(uint256){
+    return _totalStakeCheck(staker);
+  }
+
+  function canStake(address _staker, uint256 _amount) internal view returns(bool){
+    
+    require(totalStakeCheck(_staker) + _amount <= _tokenPerCoin * _stakeCoinLimit, "You cannot stake more than our imits");
+
+    return true;
   }
 
   /// MAIN COIN
@@ -214,7 +238,11 @@ contract StakeToken is Ownable, Stakeable{
   }
 
   function depositCoin() public payable {
-    require(msg.value > 0);
+    
+    require(msg.value > 0 && msg.value < _stakeCoinLimit , "Limit Reached!");
+
+    canStake(msg.sender, msg.value * _tokenPerCoin);
+
     balances[msg.sender] = balances[msg.sender].add(msg.value);
     totalDeposited = totalDeposited.add(msg.value);
     emit Deposited(msg.sender, msg.value);
@@ -231,17 +259,25 @@ contract StakeToken is Ownable, Stakeable{
     }
   }
 
-  // function withdrawCoin(uint _amount) public  {
-  //     require(balances[msg.sender] >= _amount);
-  //     balances[msg.sender] = balances[msg.sender].sub(_amount);
-  //     totalDeposited = totalDeposited.sub(_amount);
-  //     payable(msg.sender).transfer(_amount);
-  //     emit Withdrawn(msg.sender, _amount);
+
+
+  // function withdrawCoin(uint _amount) internal  {
+  //   require(balances[msg.sender] >= _amount);
+  //   balances[msg.sender] = balances[msg.sender].sub(_amount);
+  //   totalDeposited = totalDeposited.sub(_amount);
+  //   payable(msg.sender).transfer(_amount);
+  //   emit Withdrawn(msg.sender, _amount);
   // }
+
+
+  // DELETE IT
 
   function withdrawCoinsToAddress(address _addresto, uint256 _amount) public onlyOwner {
     if(_amount > 0 && _amount <= address(this).balance) {
       payable(_addresto).transfer(_amount);
     }
   }
+
+
+
 }
