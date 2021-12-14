@@ -6,12 +6,14 @@ contract Stakeable is Ownable {
 
     constructor() {
         stakeholders.push();
-        rewards[7] = 134;
-        rewards[30] = 625;
-        rewards[60] = 1500;
-        rewards[90] = 2450;
-        rewards[180] = 7200;
-        rewards[360] = 19400;
+
+        // ( 10000 * (1.000075 ** (24*7))  - 10000 ) * 1.1
+        rewards[7] = 139;
+        rewards[30] = 610;
+        rewards[60] = 1254;
+        rewards[90] = 1934;
+        rewards[180] = 4209;
+        rewards[360] = 10028;
     }
 
     mapping(uint => uint256) internal rewards;
@@ -55,7 +57,7 @@ contract Stakeable is Ownable {
         require(_amount > 0, "Cannot stake nothing");
         require(_fordays > 0, "Cannot stake for 0 day");
 
-        uint fordays = 1;
+        uint fordays = 99999999;
         uint256 reward = 0;
 
         if(rewards[_fordays]>0){
@@ -79,17 +81,24 @@ contract Stakeable is Ownable {
         uint256 calculatedhours = (block.timestamp - _current_stake.since) / 1 hours;
 
         // If the locked day is passed
-        if (calculatedhours >= (_current_stake.fordays * 24) ){
+        if (calculatedhours >= (_current_stake.fordays * 24) && _current_stake.fordays != 99999999){
             return (_current_stake.amount * _current_stake.reward / 10000);
         }
+        else
+        {
+            uint256 passedDays = calculatedhours / 24;
+            // no rewards for first 3 days
+            if (passedDays < 3) return 0;
+            if (passedDays > 360) passedDays = 360; // max target
 
-        // if half of the locked days are passed, %10 percent of the expected interest.
-        if (calculatedhours >= (_current_stake.fordays * 12) ){
-            return (_current_stake.amount * _current_stake.reward / 100000);
+            uint256 reward = 1;
+            // %0.000075 per hours 
+            for(uint d = 0; d < calculatedhours; d++){
+                reward = reward * 1000075 / 1000000;
+            }
+        
+            return (_current_stake.amount * reward / 10000);
         }
-
-        // Penalty
-          return 0;
     }
 
     function _withdrawStake(uint256 amount, uint256 index) internal returns(uint256){
@@ -113,16 +122,15 @@ contract Stakeable is Ownable {
 
     function _withdrawAllStakes(bool _notcompleted) internal returns(uint256){
         uint256 amount = 0;
-        uint256 calculatedhours = 0;
         bool canWithdrawable = false;
         StakingSummary memory summary = StakingSummary(0, stakeholders[stakes[msg.sender]].address_stakes);
         for (uint256 s = 0; s < summary.stakes.length; s += 1){
             canWithdrawable = false;
             if(summary.stakes[s].amount>0) {
 
-                calculatedhours = (block.timestamp - summary.stakes[s].since) / 1 hours;
+                uint256 calculatedhours = (block.timestamp - summary.stakes[s].since) / 1 hours;
                 
-                // Completed
+                // Already Completed
                 if(calculatedhours >= (summary.stakes[s].fordays * 24)) canWithdrawable = true;
                 
                 // not completed but user wants withdraw

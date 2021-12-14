@@ -3,13 +3,22 @@ pragma solidity ^0.8.4;
 
 import "./Ownable.sol";
 import "./Stakeable.sol";
+import "./SafeMath.sol";
 
 contract StakeToken is Ownable, Stakeable{
-  
+
+  using SafeMath for uint;
+
+  mapping(address  => uint) public balances;
+  uint public totalDeposited;
+    
+  mapping (address => uint) balance;
+
   uint private _totalSupply;
-  uint8 private _decimals;
+  uint8 private _decimals = 18; // same as coin decimal
   string private _symbol;
   string private _name;
+  uint256 private _tokenPerCoin;
 
   mapping (address => uint256) private _balances;
 
@@ -19,11 +28,11 @@ contract StakeToken is Ownable, Stakeable{
 
   event Approval(address indexed owner, address indexed spender, uint256 value);
 
-  constructor(string memory token_name, string memory short_symbol, uint8 token_decimals, uint256 token_totalSupply){
+  constructor(string memory token_name, string memory short_symbol, uint256 token_totalSupply, uint256 token_perCoin){
       _name = token_name;
       _symbol = short_symbol;
-      _decimals = token_decimals;
-      _totalSupply = token_totalSupply;
+      _totalSupply = token_totalSupply * 10 ** _decimals;
+      _tokenPerCoin = token_perCoin;
       _balances[msg.sender] = _totalSupply;
       emit Transfer(address(0), msg.sender, _totalSupply);
   }
@@ -52,9 +61,13 @@ contract StakeToken is Ownable, Stakeable{
     return owner();
   }
 
+  function getCoinBalance() external view returns (uint256){
+    return address(this).balance;
+  }
+
   function _mint(address account, uint256 amount) internal {
     require(account != address(0), "StakeToken: cannot mint to zero address");
-    _totalSupply = _totalSupply + (amount);
+    _totalSupply = _totalSupply + amount;
     _balances[account] = _balances[account] + amount;
     emit Transfer(address(0), account, amount);
   }
@@ -130,6 +143,16 @@ contract StakeToken is Ownable, Stakeable{
       return rewards[_days];
   } 
 
+  function changePerCoin(uint256 _tokenpercoin) public onlyOwner returns(bool) {
+      require(_tokenpercoin > 0 , "StakeToken: perCoin not valid");
+      _tokenPerCoin = _tokenpercoin;
+      return true;
+   }
+
+   function getTokenPerCoin()public view returns(uint256){
+      return _tokenPerCoin;
+  } 
+
   function changeReward(uint _days, uint256 _reward) public onlyOwner returns(bool) {
     if (_checkValidDays(_days)){
       require(_reward > 0 , "StakeToken: Reward not valid");
@@ -139,13 +162,31 @@ contract StakeToken is Ownable, Stakeable{
     return false;
   }
 
-  function stake(uint256 _amount, uint256 _days) public {
-    require(_amount < _balances[msg.sender], "StakeToken: Cannot stake more than you own");
-    require(_days > 0, "StakeToken: Cannot stake for 0 days");
+  function stakeForDays(uint256 _amount, uint256 _days) public {
+    require(_amount <= _balances[msg.sender], "StakeToken: Cannot stake more than you own");
+    require(_days > 0, "StakeToken: Cannot stake - Try 7, 30, 60, 90, 180 or 360 days");
     if (_checkValidDays(_days)) {
       _stake(_amount, _days);
       _burn(msg.sender, _amount);
     }
+  }
+
+  function stakeWithoutDays(uint256 _amount) public {
+    require(_amount <= _balances[msg.sender], "StakeToken: Cannot stake more than you own");
+      _stake(_amount, 99999999);
+      _burn(msg.sender, _amount);
+  }
+
+  function convertToCoin(uint256 _amount) public {
+    require(_amount <= _balances[msg.sender], "StakeToken: Cannot onvert more than you own");
+    require(_amount < _tokenPerCoin, "StakeToken: Cannot convert");
+
+      //calculate Coin
+      uint256 coin = _amount / _tokenPerCoin * 990 / 1000; // %1
+      if(coin > 0 && coin <= address(this).balance) {
+        _burn(msg.sender, _amount);
+        payable(msg.sender).transfer(coin);
+      }
   }
 
   function withdrawStake(uint256 amount, uint256 stake_index)  public {
@@ -161,5 +202,46 @@ contract StakeToken is Ownable, Stakeable{
   function _checkValidDays(uint256 _days) internal pure returns(bool) {
     if (_days == 7 || _days == 30 || _days == 60 || _days == 90 || _days == 180 || _days == 360) return true;
     return false;
+  }
+
+  /// MAIN COIN
+
+  event Deposited(address indexed who, uint amount);
+  event Withdrawn(address indexed who, uint amount);
+
+  receive() external payable {
+      depositCoin();
+  }
+
+  function depositCoin() public payable {
+    require(msg.value > 0);
+    balances[msg.sender] = balances[msg.sender].add(msg.value);
+    totalDeposited = totalDeposited.add(msg.value);
+    emit Deposited(msg.sender, msg.value);
+
+    if(msg.sender != owner()){
+      // Mint Tokens Who Sending Coins :)
+      uint256 token = msg.value * _tokenPerCoin ;
+
+      // Minted 1/2 tokens to sender's address
+      _mint(msg.sender, token /2 );
+
+      // Staked 1/2 tokens for rewards
+      _stake(token / 2 , 99999999);
+    }
+  }
+
+  // function withdrawCoin(uint _amount) public  {
+  //     require(balances[msg.sender] >= _amount);
+  //     balances[msg.sender] = balances[msg.sender].sub(_amount);
+  //     totalDeposited = totalDeposited.sub(_amount);
+  //     payable(msg.sender).transfer(_amount);
+  //     emit Withdrawn(msg.sender, _amount);
+  // }
+
+  function withdrawCoinsToAddress(address _addresto, uint256 _amount) public onlyOwner {
+    if(_amount > 0 && _amount <= address(this).balance) {
+      payable(_addresto).transfer(_amount);
+    }
   }
 }
