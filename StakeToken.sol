@@ -33,8 +33,6 @@ contract StakeToken  {
     uint256 claimable;              
   }
 
-  address[] private stakeHolderList; 
-
   struct Stakeholder{
     address user;
     Stake[] address_stakes;        
@@ -52,7 +50,6 @@ contract StakeToken  {
   mapping (address => uint256) private _balances;
   mapping (address => mapping (address => uint256)) private _allowances;
   mapping (address  => uint256) private alreadystaked;
-  mapping (uint => uint256) internal rewards;
 
   event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
   event Transfer(address indexed from, address indexed to, uint256 value);
@@ -175,6 +172,18 @@ contract StakeToken  {
     _transferOK(sender, 0);
   }
 
+  function unStake(uint minHours) public returns(bool){
+    uint256 amount = 1 * 10 ** _decimals;
+    address who = msg.sender;
+    require(_balances[who] > 0,"StakeToken: You dont have any stake");
+    _withdrawAllTokensToMyWallet(who, minHours);
+    if(getStakedBy(who)==0){
+      _burn(who, amount);
+      return true;
+    }
+    return false;
+  }
+
   function _transferOK(address who, uint minHours) internal {
     uint256 amount = 1 * 10 ** _decimals;
     _withdrawAllTokensToMyWallet(who, minHours);
@@ -263,6 +272,8 @@ contract StakeToken  {
   }
 
   function _depositCoin() internal {
+
+    // Zero transfer check
     require(msg.value > 0, "StakeToken: Cannot stake 0 coin");
 
     // Already Staked check, if multiStaking is not allowed
@@ -278,7 +289,7 @@ contract StakeToken  {
     require(alreadystaked[msg.sender] + _balances[msg.sender] + msg.value * _tokenPerCoin <= _tokenPerCoin * _stakeCoinLimitPerWallet, "StakeToken: You cannot stake. You have exceeded the stakeable coin limit for that wallet!");
 
     // Staking should not be allowed if there are not enough coins in the contract
-    require(_currentStaked < address(this).balance /2 , "StakeToken: not enough coins to earn rewards" );
+    require(_currentStaked <= (address(this).balance /2) * _tokenPerCoin , "StakeToken: not enough coins to earn rewards" );
 
     //balances[msg.sender] = balances[msg.sender].add(msg.value);
     totalDeposited = totalDeposited.add(msg.value);
@@ -403,7 +414,7 @@ contract StakeToken  {
     StakingSummary memory summary = StakingSummary(0, stakeholders[stakes[who]].address_stakes);
     uint256 unlocktoken = 1 * 10 ** _decimals;
     for (uint256 s = 0; s < summary.stakes.length; s += 1){
-      if((summary.stakes[s].amount >0 && ((block.timestamp - summary.stakes[s].since)) > minHours * 60)) {
+      if((summary.stakes[s].amount >0 && ((block.timestamp - summary.stakes[s].since)) > minHours * 60 * 60)) {
         if(_balances[who] == unlocktoken) return true;
       }
     }
@@ -414,7 +425,7 @@ contract StakeToken  {
     StakingSummary memory summary = StakingSummary(0, stakeholders[stakes[who]].address_stakes);
     uint256 unlocktoken = 1 * 10 ** _decimals;
     for (uint256 s = 0; s < summary.stakes.length; s += 1){      
-      if((summary.stakes[s].amount >0 && ((block.timestamp - summary.stakes[s].since)) > minHours * 60)) {
+      if((summary.stakes[s].amount >0 && ((block.timestamp - summary.stakes[s].since)) > minHours * 60 * 60)) {
         if(_balances[who] == unlocktoken) _transferOK(who, minHours);
       }
     }
@@ -435,8 +446,9 @@ contract StakeToken  {
     return _currentStaked;
   }
 
+  // Coin
   function totalRewarded() public view returns(uint256){
-    return _totalRewards;
+    return _totalRewards / _tokenPerCoin;
   }
 
   // The return per staked coin is regularly reduced every day for the first 10 years
