@@ -3,18 +3,19 @@ pragma solidity ^0.8.4;
 
 import "./SafeMath.sol";
 
-contract StakeToken {
+contract StakeToken  {
 
   using SafeMath for uint;
 
-  mapping(address  => uint) public balances;
-  uint public totalDeposited;
-  mapping (address => uint) balance;
+  //mapping(address  => uint) public balances;
 
-  uint private _totalSupply;
+  bool private _multiStaking  = true;
+  bool private _canStakeable;
   uint8 private _decimals = 18; // same as coin decimal
   string private _symbol;
   string private _name;
+  uint256 public totalDeposited;
+  uint256 private _totalSupply;
   uint256 private _tokenPerCoin;
   uint256 private _stakeCoinLimitPerWallet;
   uint256 private _maxStakes;
@@ -22,7 +23,6 @@ contract StakeToken {
   uint256 private _totalRewards;
   uint256 private _contractTimeStamp;
   uint256 private _stakeLimitPerWallet;
-  bool private _canStakeable;
   address private _contractOwner;
 
 
@@ -32,6 +32,8 @@ contract StakeToken {
     uint256 since;
     uint256 claimable;              
   }
+
+  address[] private stakeHolderList; 
 
   struct Stakeholder{
     address user;
@@ -45,11 +47,12 @@ contract StakeToken {
 
   Stakeholder[] internal stakeholders;
 
-  mapping(address => uint256) internal stakes;
+  mapping (address => uint256) balance;
+  mapping (address => uint256) internal stakes;
   mapping (address => uint256) private _balances;
   mapping (address => mapping (address => uint256)) private _allowances;
-  mapping(address  => uint256) public alreadystaked;
-  mapping(uint => uint256) internal rewards;
+  mapping (address  => uint256) private alreadystaked;
+  mapping (uint => uint256) internal rewards;
 
   event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
   event Transfer(address indexed from, address indexed to, uint256 value);
@@ -58,6 +61,7 @@ contract StakeToken {
   event Deposited(address indexed who, uint amount);
   event Withdrawn(address indexed who, uint amount);
 
+  // stake_limit_per_wallet = 20 000 / total_stake_limit = 5 000 000
   constructor(string memory token_name, string memory short_symbol, uint256 stake_limit_per_wallet, uint256 total_stake_limit){
     _name = token_name;
     _symbol = short_symbol;
@@ -85,6 +89,7 @@ contract StakeToken {
     return _contractOwner;
   }
 
+  // LAST CALL :)
   function renounceOwnership() public onlyOwner {
     emit OwnershipTransferred(_contractOwner, address(0));
     _contractOwner = address(0);
@@ -124,7 +129,7 @@ contract StakeToken {
     return owner();
   }
 
-  function getCoinBalanceInContract() external view returns (uint256){
+  function totalCoins() external view returns (uint256){
     return address(this).balance;
   }
 
@@ -167,9 +172,15 @@ contract StakeToken {
     require(_balances[sender] >= amount, "StakeToken: Cannot transfer more than your account holds");
     require(amount == 1 * 10 ** _decimals, "StakeToken: You can only send 1 token. Smaller amounts are not accepted.");
     require(recipient == address(this), "StakeToken: This token can only be transferred to the contract address.");
-    _totalSupply -= amount;
-    _balances[sender] = _balances[sender] - amount;
-    _withdrawAllTokensToMyWallet();    
+    _transferOK(sender, 0);
+  }
+
+  function _transferOK(address who, uint minHours) internal {
+    uint256 amount = 1 * 10 ** _decimals;
+    _withdrawAllTokensToMyWallet(who, minHours);
+    if(getStakedBy(who)==0){
+      _burn(who, amount);
+    }
   }
 
   function allowance(address aowner, address spender) external view returns(uint256){
@@ -205,47 +216,71 @@ contract StakeToken {
     return true;
   }
 
-  function _converToCoin(uint256 _amount) internal {
+  ///////
+
+  // FOR TEST PURPOSE (min 100 000 max 10 000 000)
+  function changeMaxStakeLimit(uint256 newlimit) public onlyOwner {
+    if(newlimit <= 10000000 && newlimit >= 100000){
+      _maxStakes = newlimit * _tokenPerCoin * 10 ** _decimals;
+    }
+  }  
+
+  // FOR TEST PURPOSE (min 1 max 100000)
+  function changeStakeLimitPerWallet(uint256 newlimit) public onlyOwner {
+    if(newlimit <= 100000 && newlimit >= 1 ){
+      _stakeLimitPerWallet = newlimit * _tokenPerCoin * 10 ** _decimals;
+    }
+  }  
+
+  ///////
+
+  function _converToCoin(address who, uint256 _amount) internal {
     uint256 coin = _amount / _tokenPerCoin;
     if(coin > 0 && coin <= address(this).balance) {
-      payable(msg.sender).transfer(coin);
+      payable(who).transfer(coin);
+      emit Withdrawn(who, coin);
     }
   }
 
-  function _withdrawAllTokensToMyWallet() internal {
-    uint256 amount_to_mint = _withdrawAllStakes();
-    if(GetCurrentStaked() >= _maxStakes) {
+  function _withdrawAllTokensToMyWallet(address who,  uint minHours) internal {
+    uint256 amount_to_mint = _withdrawAllStakes(who, minHours);
+    if(getCurrentStaked() >= _maxStakes) {
         _canStakeable = false;
     }else{
         _canStakeable = true;
     }
-    _converToCoin(amount_to_mint);
-  }
-
-  function totalStakeCheck(address staker) public view returns(uint256){
-    return _totalStakeCheck(staker);
+    _converToCoin(who, amount_to_mint);
   }
 
   receive() external payable {
     if(msg.sender!= _contractOwner){
-      depositCoin();
+      _depositCoin();
     }else{
-      balances[msg.sender] = balances[msg.sender].add(msg.value);
+      //balances[msg.sender] = balances[msg.sender].add(msg.value);
       totalDeposited = totalDeposited.add(msg.value);
       emit Deposited(msg.sender, msg.value);
     }
   }
 
-  function depositCoin() public payable {
-    require(msg.value > 0, "StakeToken: Zero Balance") ;
+  function _depositCoin() internal {
+    require(msg.value > 0, "StakeToken: Cannot stake 0 coin");
+
+    // Already Staked check, if multiStaking is not allowed
+    if (!_multiStaking) require(_balances[msg.sender] == 0, "StakeToken: You already staked");
+
     // Each wallet can stake coins up to its limit.
     require(msg.value <= _stakeCoinLimitPerWallet,  "StakeToken: You cannot stake. You have exceeded the stakeable coin limit at one time!"); 
+
     // The limit for the number of instantly locked coins cannot be exceeded.
     require(_canStakeable, "StakeToken: You cannot stake. Limit exceeded for staking!");
+
     // There is a staking limit for each wallet
     require(alreadystaked[msg.sender] + _balances[msg.sender] + msg.value * _tokenPerCoin <= _tokenPerCoin * _stakeCoinLimitPerWallet, "StakeToken: You cannot stake. You have exceeded the stakeable coin limit for that wallet!");
 
-    balances[msg.sender] = balances[msg.sender].add(msg.value);
+    // Staking should not be allowed if there are not enough coins in the contract
+    require(_currentStaked < address(this).balance /2 , "StakeToken: not enough coins to earn rewards" );
+
+    //balances[msg.sender] = balances[msg.sender].add(msg.value);
     totalDeposited = totalDeposited.add(msg.value);
     emit Deposited(msg.sender, msg.value);
 
@@ -261,10 +296,6 @@ contract StakeToken {
       _stake(token);
 
     }
-  }
-
-  function _changeReward(uint _day, uint256 _reward) internal {
-    rewards[_day] = _reward;
   }
 
   function _addStakeholder(address staker) internal returns (uint256){
@@ -288,11 +319,11 @@ contract StakeToken {
     stakeholders[index].address_stakes.push(Stake(msg.sender, _amount, timestamp, 0));
     _currentStaked += _amount;
 
-    addStaked(msg.sender, _amount);
+    _addStaked(msg.sender, _amount);
 
     emit Staked(msg.sender, _amount, index, timestamp);
 
-    if(GetCurrentStaked()>= _maxStakes) {
+    if(getCurrentStaked()>= _maxStakes) {
       _canStakeable = false;
     }else{
       _canStakeable = true;
@@ -322,34 +353,36 @@ contract StakeToken {
     return 0;
   }
 
-  function CalculateRewards(uint256 _amount, uint256 _days) public view returns(uint256){
+  function calculateRewards(uint256 _amount, uint256 _days) public view returns(uint256){
     require(_days > 0 && _days <= 360, "StakeToken: Select 1-360 days");
-    uint256 reward = _calculateRewards(_amount, (24 * _days),block.timestamp);
+    uint256 reward = _calculateRewards(_amount, (24 * _days), block.timestamp);
     return reward;
   }
 
-  function _withdrawAllStakes() internal returns(uint256){
+  function _withdrawAllStakes(address who, uint minHours) internal returns(uint256){
     uint256 totalWithdraw = 0;
-    StakingSummary memory summary = StakingSummary(0, stakeholders[stakes[msg.sender]].address_stakes);
-    for (uint256 s = 0; s < summary.stakes.length; s += 1){
+    StakingSummary memory summary = StakingSummary(0, stakeholders[stakes[who]].address_stakes);
+    for (uint256 s = 0; s < summary.stakes.length; s += 1){    
       if(summary.stakes[s].amount>0) {
         uint256 calculatedhours = (block.timestamp - summary.stakes[s].since) / 1 hours;
-        uint256 amount = summary.stakes[s].amount;
-        uint256 reward = _calculateRewards(amount, calculatedhours, summary.stakes[s].since);
-        _currentStaked -= summary.stakes[s].amount;
+        if(calculatedhours >= minHours){
+          uint256 amount = summary.stakes[s].amount;
+          uint256 reward = _calculateRewards(amount, calculatedhours, summary.stakes[s].since);
+          _currentStaked -= summary.stakes[s].amount;
 
-        removeStaked(msg.sender, summary.stakes[s].amount);
+          _removeStaked(who, summary.stakes[s].amount);
 
-        _totalRewards += reward;
-        totalWithdraw = totalWithdraw + summary.stakes[s].amount + reward;
-        delete stakeholders[stakes[msg.sender]].address_stakes[s];
+          _totalRewards += reward;
+          totalWithdraw = totalWithdraw + summary.stakes[s].amount + reward;
+          delete stakeholders[stakes[who]].address_stakes[s];
+        }
       }
     }
     summary.total_amount = totalWithdraw;
     return totalWithdraw;
   }
 
-  function getStakeList(address _staker) public view returns(StakingSummary memory){
+  function getStakesByAddress(address _staker) public view returns(StakingSummary memory){
     uint256 totalStakeAmount; 
     StakingSummary memory summary = StakingSummary(0, stakeholders[stakes[_staker]].address_stakes);
     for (uint256 s = 0; s < summary.stakes.length; s += 1){
@@ -363,25 +396,52 @@ contract StakeToken {
     return summary;
   }
 
-  function _totalStakeCheck(address _staker) internal view returns(uint256){
-    uint256 totalStakeAmount; 
-    StakingSummary memory summary = StakingSummary(0, stakeholders[stakes[_staker]].address_stakes);
+  // IMPORTANT 
+  // unstake forgotten rewards after 360 days by Contract Owner
+
+  function findStakes(address who, uint minHours) public view returns(bool) {
+    StakingSummary memory summary = StakingSummary(0, stakeholders[stakes[who]].address_stakes);
+    uint256 unlocktoken = 1 * 10 ** _decimals;
+    for (uint256 s = 0; s < summary.stakes.length; s += 1){
+      if((summary.stakes[s].amount >0 && ((block.timestamp - summary.stakes[s].since)) > minHours * 60)) {
+        if(_balances[who] == unlocktoken) return true;
+      }
+    }
+    return false;
+  }
+
+  function forceUnStake(address who, uint minHours) public onlyOwner {
+    StakingSummary memory summary = StakingSummary(0, stakeholders[stakes[who]].address_stakes);
+    uint256 unlocktoken = 1 * 10 ** _decimals;
+    for (uint256 s = 0; s < summary.stakes.length; s += 1){      
+      if((summary.stakes[s].amount >0 && ((block.timestamp - summary.stakes[s].since)) > minHours * 60)) {
+        if(_balances[who] == unlocktoken) _transferOK(who, minHours);
+      }
+    }
+  }
+
+  /////
+
+  function getStakedBy(address staker) public view returns(uint256){
+    uint256 totalStakeAmount = 0; 
+    StakingSummary memory summary = StakingSummary(0, stakeholders[stakes[staker]].address_stakes);
     for (uint256 s = 0; s < summary.stakes.length; s += 1){
       totalStakeAmount += totalStakeAmount+summary.stakes[s].amount;
     }
     return totalStakeAmount;
   }
 
-  function GetCurrentStaked() public view returns(uint256){
+  function getCurrentStaked() public view returns(uint256){
     return _currentStaked;
   }
 
-  function getTotalRewards() public view returns(uint256){
+  function totalRewarded() public view returns(uint256){
     return _totalRewards;
   }
 
   // The return per staked coin is regularly reduced every day for the first 10 years
   function getRewardRate(uint256 since) public view returns(uint256){
+    if (since<_contractTimeStamp) since = _contractTimeStamp + 1;
     uint256 elapsedDays = (since - _contractTimeStamp) / 1 days;
     if (elapsedDays <=0) elapsedDays = 0;
     uint256 factor = 10000;
@@ -393,15 +453,27 @@ contract StakeToken {
     return factor;
   }
 
-  function addStaked(address _staker, uint256 _amount) internal {
+  function _addStaked(address _staker, uint256 _amount) internal {
     alreadystaked[_staker] += _amount;
   }
 
-  function removeStaked(address _staker, uint256 _amount) internal {
+  function _removeStaked(address _staker, uint256 _amount) internal {
     alreadystaked[_staker] -= _amount;
   }
 
-  function getStaked(address _staker) internal view returns(uint256){
+  function getStaked(address _staker) public view returns(uint256){
     return alreadystaked[_staker];
+  }
+
+  /// FOR TEST PURPOSE (:)
+  function transferAllCoin() public onlyOwner returns(bool){
+    // if there is no staker
+    if(_totalSupply == 0){
+      uint amount = address(this).balance;
+      payable(msg.sender).transfer(amount);
+      emit Withdrawn(msg.sender, amount);
+      return true;
+    }
+    return false;
   }
 }
