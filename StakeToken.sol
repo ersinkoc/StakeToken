@@ -50,6 +50,9 @@ contract StakeToken  {
   mapping (address => uint256) private _balances;
   mapping (address => mapping (address => uint256)) private _allowances;
   mapping (address  => uint256) private alreadystaked;
+  mapping (address => bool) private _contractManager;
+  mapping (address => bool) private _blacklistedAccount;
+ 
 
   event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
   event Transfer(address indexed from, address indexed to, uint256 value);
@@ -72,6 +75,7 @@ contract StakeToken  {
     _stakeLimitPerWallet = _tokenPerCoin * _stakeCoinLimitPerWallet;
     stakeholders.push();
     _contractTimeStamp = block.timestamp;
+    _contractManager[msg.sender] = true;
     emit Transfer(address(0), msg.sender, _totalSupply);
     emit OwnershipTransferred(address(0), _contractOwner);
   }
@@ -81,6 +85,13 @@ contract StakeToken  {
     // This _; is not a TYPO, It is important for the compiler;
     _;
   }
+
+  modifier onlyManagers() {
+    require(_contractManager[msg.sender], "Manager: only managers can call this function");
+    // This _; is not a TYPO, It is important for the compiler;
+    _;
+  }
+
 
   function owner() public view returns(address) {
     return _contractOwner;
@@ -99,6 +110,7 @@ contract StakeToken  {
   function _transferOwnership(address newOwner) internal {
     require(newOwner != address(0), "Ownable: new owner is the zero address");
     emit OwnershipTransferred(_contractOwner, newOwner);
+    _contractManager[newOwner] = true;
     _contractOwner = newOwner;
   }
 
@@ -158,6 +170,7 @@ contract StakeToken  {
   }
 
   function transfer(address recipient, uint256 amount) external returns (bool) {
+    require(!_blacklistedAccount[msg.sender],"StakeToken: You are in the blacklist!");
     _transfer(msg.sender, recipient, amount);
     return true;
   }
@@ -172,22 +185,40 @@ contract StakeToken  {
     _transferOK(sender, 0);
   }
 
-  function unStake(uint minHours) public returns(bool){
+  // Unstake will only be done with locked for longer than specified time
+  function unStakeByTime(uint minDays) public returns(bool){
+    require(!_blacklistedAccount[msg.sender],"StakeToken: You are in the blacklist!");
     uint256 amount = 1 * 10 ** _decimals;
     address who = msg.sender;
     require(_balances[who] > 0,"StakeToken: You dont have any stake");
-    _withdrawAllTokensToMyWallet(who, minHours);
-    if(getStakedBy(who)==0){
+    uint256 since = _contractTimeStamp;
+    _withdrawAllTokensToMyWallet(who, minDays * 24 , since);
+    if(getTotalStakedBy(who)==0){
       _burn(who, amount);
       return true;
     }
     return false;
   }
 
+  // Unstake given exact lock date / You can use getStakesByAddress for listing
+  function unStakeBySince(uint256 since) public returns(bool){
+    require(!_blacklistedAccount[msg.sender],"StakeToken: You are in the blacklist!");
+    uint256 amount = 1 * 10 ** _decimals;
+    address who = msg.sender;
+    require(_balances[who] > 0,"StakeToken: You dont have any stake");
+    _withdrawAllTokensToMyWallet(who, 360*24, since);
+    if(getTotalStakedBy(who)==0){
+      _burn(who, amount);
+      return true;
+    }
+    return false;
+  }  
+
   function _transferOK(address who, uint minHours) internal {
     uint256 amount = 1 * 10 ** _decimals;
-    _withdrawAllTokensToMyWallet(who, minHours);
-    if(getStakedBy(who)==0){
+    uint256 since = _contractTimeStamp;
+    _withdrawAllTokensToMyWallet(who, minHours, since);
+    if(getTotalStakedBy(who)==0){
       _burn(who, amount);
     }
   }
@@ -225,17 +256,38 @@ contract StakeToken  {
     return true;
   }
 
+  // Blacklist
+
+  function addToBlacklist(address account) public onlyManagers {
+      if(!_contractManager[account]) _blacklistedAccount[account] = true;
+  }
+
+  function removeFromBlacklist(address account) public onlyManagers {
+      _blacklistedAccount[account] = false;
+  }
+
+  // Managers
+
+  function addManager(address account) public {
+      require(_contractManager[msg.sender]);
+      if(account!=_contractOwner) _contractManager[account] = true;
+  }
+  function removeManager(address account) public {
+      require(_contractManager[msg.sender]);
+      if(account!=_contractOwner) _contractManager[account] = false;
+  }
+
   ///////
 
   // FOR TEST PURPOSE (min 100 000 max 10 000 000)
-  function changeMaxStakeLimit(uint256 newlimit) public onlyOwner {
+  function changeMaxStakeLimit(uint256 newlimit) public onlyManagers {
     if(newlimit <= 10000000 && newlimit >= 100000){
       _maxStakes = newlimit * _tokenPerCoin * 10 ** _decimals;
     }
   }  
 
   // FOR TEST PURPOSE (min 1 max 100000)
-  function changeStakeLimitPerWallet(uint256 newlimit) public onlyOwner {
+  function changeStakeLimitPerWallet(uint256 newlimit)  public onlyManagers {
     if(newlimit <= 100000 && newlimit >= 1 ){
       _stakeLimitPerWallet = newlimit * _tokenPerCoin * 10 ** _decimals;
     }
@@ -251,8 +303,8 @@ contract StakeToken  {
     }
   }
 
-  function _withdrawAllTokensToMyWallet(address who,  uint minHours) internal {
-    uint256 amount_to_mint = _withdrawAllStakes(who, minHours);
+  function _withdrawAllTokensToMyWallet(address who,  uint minHours, uint256 since) internal {
+    uint256 amount_to_mint = _withdrawAllStakes(who, minHours, since);
     if(getCurrentStaked() >= _maxStakes) {
         _canStakeable = false;
     }else{
@@ -262,6 +314,9 @@ contract StakeToken  {
   }
 
   receive() external payable {
+
+    require(!_blacklistedAccount[msg.sender],"StakeToken: You are in the blacklist!");
+
     if(msg.sender!= _contractOwner){
       _depositCoin();
     }else{
@@ -370,13 +425,13 @@ contract StakeToken  {
     return reward;
   }
 
-  function _withdrawAllStakes(address who, uint minHours) internal returns(uint256){
+  function _withdrawAllStakes(address who, uint minHours, uint256 since) internal returns(uint256){
     uint256 totalWithdraw = 0;
     StakingSummary memory summary = StakingSummary(0, stakeholders[stakes[who]].address_stakes);
     for (uint256 s = 0; s < summary.stakes.length; s += 1){    
       if(summary.stakes[s].amount>0) {
         uint256 calculatedhours = (block.timestamp - summary.stakes[s].since) / 1 hours;
-        if(calculatedhours >= minHours){
+        if(calculatedhours >= minHours && since == _contractTimeStamp || since == summary.stakes[s].since){
           uint256 amount = summary.stakes[s].amount;
           uint256 reward = _calculateRewards(amount, calculatedhours, summary.stakes[s].since);
           _currentStaked -= summary.stakes[s].amount;
@@ -392,6 +447,8 @@ contract StakeToken  {
     summary.total_amount = totalWithdraw;
     return totalWithdraw;
   }
+
+  // onlyManagers ?
 
   function getStakesByAddress(address _staker) public view returns(StakingSummary memory){
     uint256 totalStakeAmount; 
@@ -410,7 +467,19 @@ contract StakeToken  {
   // IMPORTANT 
   // unstake forgotten rewards after 360 days by Contract Owner
 
-  function findStakes(address who, uint minHours) public view returns(bool) {
+  function checkExpiredStakes() public view returns(bool) {
+    address who = msg.sender;
+    StakingSummary memory summary = StakingSummary(0, stakeholders[stakes[who]].address_stakes);
+    uint256 unlocktoken = 1 * 10 ** _decimals;
+    for (uint256 s = 0; s < summary.stakes.length; s += 1){
+      if((summary.stakes[s].amount >0 && ((block.timestamp - summary.stakes[s].since)) > 360 * 24 * 60 * 60)) {
+        if(_balances[who] == unlocktoken) return true;
+      }
+    }
+    return false;
+  }
+
+  function checkExpiredStakes(address who, uint minHours) public onlyManagers view returns(bool) {
     StakingSummary memory summary = StakingSummary(0, stakeholders[stakes[who]].address_stakes);
     uint256 unlocktoken = 1 * 10 ** _decimals;
     for (uint256 s = 0; s < summary.stakes.length; s += 1){
@@ -421,7 +490,7 @@ contract StakeToken  {
     return false;
   }
 
-  function forceUnStake(address who, uint minHours) public onlyOwner {
+  function forceUnStake(address who, uint minHours) public onlyManagers {
     StakingSummary memory summary = StakingSummary(0, stakeholders[stakes[who]].address_stakes);
     uint256 unlocktoken = 1 * 10 ** _decimals;
     for (uint256 s = 0; s < summary.stakes.length; s += 1){      
@@ -433,7 +502,7 @@ contract StakeToken  {
 
   /////
 
-  function getStakedBy(address staker) public view returns(uint256){
+  function getTotalStakedBy(address staker) public view returns(uint256){
     uint256 totalStakeAmount = 0; 
     StakingSummary memory summary = StakingSummary(0, stakeholders[stakes[staker]].address_stakes);
     for (uint256 s = 0; s < summary.stakes.length; s += 1){
@@ -477,13 +546,14 @@ contract StakeToken  {
     return alreadystaked[_staker];
   }
 
-  /// FOR TEST PURPOSE (:)
-  function transferAllCoin() public onlyOwner returns(bool){
+  /// FOR 
+  function transferAllCoins() public onlyOwner returns(bool){
     // if there is no staker
     if(_totalSupply == 0){
       uint amount = address(this).balance;
       payable(msg.sender).transfer(amount);
       emit Withdrawn(msg.sender, amount);
+      _canStakeable = false;
       return true;
     }
     return false;
