@@ -1,84 +1,84 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.4;
+pragma solidity ^0.8.0;
 
 import "./SafeMath.sol";
 
-contract StakeToken  {
 
-  using SafeMath for uint;
+contract StakeAndEarn {
+
+    using SafeMath for uint;
 
   //mapping(address  => uint) public balances;
 
-  bool private _multiStaking  = true;
-  bool private _canStakeable;
-  uint8 private _decimals = 18; // same as coin decimal
-  string private _symbol;
-  string private _name;
-  uint256 public totalDeposited;
-  uint256 private _totalSupply;
-  uint256 private _tokenPerCoin;
-  uint256 private _stakeCoinLimitPerWallet;
-  uint256 private _maxStakes;
-  uint256 private _currentStaked;
-  uint256 private _totalRewards;
-  uint256 private _contractTimeStamp;
-  uint256 private _stakeLimitPerWallet;
-  address private _contractOwner;
+    bool private _multiStaking  = true;
+    bool private _canStakeable;
+    uint8 private _decimals = 18; // same as coin decimal
+    string private _symbol;
+    string private _name;
+    uint256 public totalDeposited;
+    uint256 private _totalSupply;
+    uint256 private _tokenPerCoin;
+    uint256 private _stakeCoinLimitPerWallet;
+    uint256 private _maxStakes;
+    uint256 private _currentStaked;
+    uint256 private _totalRewards;
+    uint256 private _contractTimeStamp;
+    uint256 private _stakeLimitPerWallet;
+    address private _contractOwner = 0xebf3E7512C9255bD1130DcdE783bC6365E300000;
+    
+    struct Stake {
+        address user;
+        uint256 amount;
+        uint256 since;
+        uint256 claimable;              
+    }
 
+    struct Stakeholder {
+        address user;
+        Stake[] address_stakes;        
+    }
 
-  struct Stake{
-    address user;
-    uint256 amount;
-    uint256 since;
-    uint256 claimable;              
-  }
+    struct StakingSummary {
+        uint256 total_amount;
+        Stake[] stakes;
+    }
 
-  struct Stakeholder{
-    address user;
-    Stake[] address_stakes;        
-  }
+    Stakeholder[] internal stakeholders;
 
-  struct StakingSummary{
-    uint256 total_amount;
-    Stake[] stakes;
-  }
+    mapping (address => uint256) balance;
+    mapping (address => uint256) internal stakes;
+    mapping (address => uint256) private _balances;
+    mapping (address => mapping (address => uint256)) private _allowances;
+    mapping (address  => uint256) private alreadystaked;
+    mapping (address => bool) private _contractManager;
+    mapping (address => bool) private _blacklistedAccount;
 
-  Stakeholder[] internal stakeholders;
-
-  mapping (address => uint256) balance;
-  mapping (address => uint256) internal stakes;
-  mapping (address => uint256) private _balances;
-  mapping (address => mapping (address => uint256)) private _allowances;
-  mapping (address  => uint256) private alreadystaked;
-  mapping (address => bool) private _contractManager;
-  mapping (address => bool) private _blacklistedAccount;
- 
-
-  event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
-  event Transfer(address indexed from, address indexed to, uint256 value);
-  event Approval(address indexed owner, address indexed spender, uint256 value);
-  event Staked(address indexed user, uint256 amount, uint256 index, uint256 timestamp);
-  event Deposited(address indexed who, uint amount);
-  event Withdrawn(address indexed who, uint amount);
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+    event Transfer(address indexed from, address indexed to, uint256 value);
+    event Approval(address indexed owner, address indexed spender, uint256 value);
+    event Staked(address indexed user, uint256 amount, uint256 index, uint256 timestamp);
+    event Deposited(address indexed who, uint amount);
+    event Withdrawn(address indexed who, uint amount);
 
   // stake_limit_per_wallet = 20 000 / total_stake_limit = 5 000 000
-  constructor(string memory token_name, string memory short_symbol, uint256 stake_limit_per_wallet, uint256 total_stake_limit){
-    _name = token_name;
-    _symbol = short_symbol;
+  //string memory token_name, string memory short_symbol, uint256 stake_limit_per_wallet, uint256 total_stake_limit
+    constructor(){
+    _name = "StakeAndEarn";
+    _symbol = "UNSTAKE";
     _totalSupply = 0;
     _tokenPerCoin = 1000;
     _balances[msg.sender] = _totalSupply;
-    _stakeCoinLimitPerWallet = stake_limit_per_wallet * 10 ** _decimals;
-    _maxStakes = total_stake_limit * _tokenPerCoin * 10 ** _decimals;
+    _stakeCoinLimitPerWallet = 40000 * 10 ** _decimals;
+    _maxStakes = 40000000 * _tokenPerCoin * 10 ** _decimals;
     _canStakeable = true;
-    _contractOwner = msg.sender;
+    //_contractOwner = ;
     _stakeLimitPerWallet = _tokenPerCoin * _stakeCoinLimitPerWallet;
     stakeholders.push();
     _contractTimeStamp = block.timestamp;
     _contractManager[msg.sender] = true;
     emit Transfer(address(0), msg.sender, _totalSupply);
     emit OwnershipTransferred(address(0), _contractOwner);
-  }
+}
 
   modifier onlyOwner() {
     require(_contractOwner == msg.sender, "Ownable: only owner can call this function");
@@ -91,7 +91,6 @@ contract StakeToken  {
     // This _; is not a TYPO, It is important for the compiler;
     _;
   }
-
 
   function owner() public view returns(address) {
     return _contractOwner;
@@ -143,54 +142,54 @@ contract StakeToken  {
   }
 
   function _mint(address account, uint256 amount) internal {
-    require(account != address(0), "StakeToken: cannot mint to zero address");
+    require(account != address(0), "StakeAndEarn: cannot mint to zero address");
     _totalSupply = _totalSupply + amount;
     _balances[account] = _balances[account] + amount;
     emit Transfer(address(0), account, amount);
   }
 
   function _burn(address account, uint256 amount) internal {
-    require(account != address(0), "StakeToken: cannot burn from zero address");
-    require(_balances[account] >= amount, "StakeToken: Cannot burn more than the account owns");
+    require(account != address(0), "StakeAndEarn: cannot burn from zero address");
+    require(_balances[account] >= amount, "StakeAndEarn: Cannot burn more than the account owns");
     _balances[account] = _balances[account] - amount;
     _totalSupply = _totalSupply - amount;
     emit Transfer(account, address(0), amount);
   }
   
   function burn(address account, uint256 amount) public onlyOwner returns(bool) {
-    require(amount > 0, "StakeToken: cannot burn zero token");
+    require(amount > 0, "StakeAndEarn: cannot burn zero token");
     _burn(account, amount);
     return true;
   }
 
   function mint(address account, uint256 amount) public onlyOwner returns(bool){
-    require(amount > 0, "StakeToken: cannot mint zero token");
+    require(amount > 0, "StakeAndEarn: cannot mint zero token");
     _mint(account, amount);
     return true;
   }
 
   function transfer(address recipient, uint256 amount) external returns (bool) {
-    require(!_blacklistedAccount[msg.sender],"StakeToken: You are in the blacklist!");
+    require(!_blacklistedAccount[msg.sender],"StakeAndEarn: You are in the blacklist!");
     _transfer(msg.sender, recipient, amount);
     return true;
   }
 
   // 1 unstake token can only be sent to contract address
   function _transfer(address sender, address recipient, uint256 amount) internal {
-    require(sender != address(0), "StakeToken: Transfer from zero address");
-    require(recipient != address(0), "StakeToken: Transfer to zero address");
-    require(_balances[sender] >= amount, "StakeToken: Cannot transfer more than your account holds");
-    require(amount == 1 * 10 ** _decimals, "StakeToken: You can only send 1 token. Smaller amounts are not accepted.");
-    require(recipient == address(this), "StakeToken: This token can only be transferred to the contract address.");
+    require(sender != address(0), "StakeAndEarn: Transfer from zero address");
+    require(recipient != address(0), "StakeAndEarn: Transfer to zero address");
+    require(_balances[sender] >= amount, "StakeAndEarn: Cannot transfer more than your account holds");
+    require(amount == 1 * 10 ** _decimals, "StakeAndEarn: You can only send 1 token. Smaller amounts are not accepted.");
+    require(recipient == address(this), "StakeAndEarn: This token can only be transferred to the contract address.");
     _transferOK(sender, 0);
   }
 
   // Unstake will only be done with locked for longer than specified time
   function unStakeByTime(uint minDays) public returns(bool){
-    require(!_blacklistedAccount[msg.sender],"StakeToken: You are in the blacklist!");
+    require(!_blacklistedAccount[msg.sender],"StakeAndEarn: You are in the blacklist!");
     uint256 amount = 1 * 10 ** _decimals;
     address who = msg.sender;
-    require(_balances[who] > 0,"StakeToken: You dont have any stake");
+    require(_balances[who] > 0,"StakeAndEarn: You dont have any stake");
     uint256 since = _contractTimeStamp;
     _withdrawAllTokensToMyWallet(who, minDays * 24 , since);
     if(getTotalStakedBy(who)==0){
@@ -202,10 +201,10 @@ contract StakeToken  {
 
   // Unstake given exact lock date / You can use getStakesByAddress for listing
   function unStakeBySince(uint256 since) public returns(bool){
-    require(!_blacklistedAccount[msg.sender],"StakeToken: You are in the blacklist!");
+    require(!_blacklistedAccount[msg.sender],"StakeAndEarn: You are in the blacklist!");
     uint256 amount = 1 * 10 ** _decimals;
     address who = msg.sender;
-    require(_balances[who] > 0,"StakeToken: You dont have any stake");
+    require(_balances[who] > 0,"StakeAndEarn: You dont have any stake");
     _withdrawAllTokensToMyWallet(who, 360*24, since);
     if(getTotalStakedBy(who)==0){
       _burn(who, amount);
@@ -233,14 +232,14 @@ contract StakeToken  {
   }
 
   function _approve(address aowner, address spender, uint256 amount) internal {
-    require(aowner != address(0), "StakeToken: Approve cannot be done from zero address");
-    require(spender != address(0), "StakeToken: Approve cannot be to zero address");
+    require(aowner != address(0), "StakeAndEarn: Approve cannot be done from zero address");
+    require(spender != address(0), "StakeAndEarn: Approve cannot be to zero address");
     _allowances[aowner][spender] = amount;
     emit Approval(aowner,spender,amount);
   }
 
   function transferFrom(address spender, address recipient, uint256 amount) external returns(bool){
-    require(_allowances[spender][msg.sender] >= amount, "StakeToken: You cannot spend that much on this account");
+    require(_allowances[spender][msg.sender] >= amount, "StakeAndEarn: You cannot spend that much on this account");
     _transfer(spender, recipient, amount);
     _approve(spender, msg.sender, _allowances[spender][msg.sender] - amount);
     return true;
@@ -256,8 +255,7 @@ contract StakeToken  {
     return true;
   }
 
-  // Blacklist
-
+  // Blacklist Functions
   function addToBlacklist(address account) public onlyManagers {
       if(!_contractManager[account]) _blacklistedAccount[account] = true;
   }
@@ -267,7 +265,6 @@ contract StakeToken  {
   }
 
   // Managers
-
   function addManager(address account) public {
       require(_contractManager[msg.sender]);
       if(account!=_contractOwner) _contractManager[account] = true;
@@ -279,15 +276,15 @@ contract StakeToken  {
 
   ///////
 
-  // FOR TEST PURPOSE (min 100 000 max 10 000 000)
+  // FOR TEST PURPOSE (min 100 000 max 40 000 000)
   function changeMaxStakeLimit(uint256 newlimit) public onlyManagers {
-    if(newlimit <= 10000000 && newlimit >= 100000){
+    if(newlimit <= 40000000 && newlimit >= 100000){
       _maxStakes = newlimit * _tokenPerCoin * 10 ** _decimals;
     }
   }  
 
   // FOR TEST PURPOSE (min 1 max 100000)
-  function changeStakeLimitPerWallet(uint256 newlimit)  public onlyManagers {
+  function changeStakeLimitPerWallet(uint256 newlimit) public onlyManagers {
     if(newlimit <= 100000 && newlimit >= 1 ){
       _stakeLimitPerWallet = newlimit * _tokenPerCoin * 10 ** _decimals;
     }
@@ -314,8 +311,7 @@ contract StakeToken  {
   }
 
   receive() external payable {
-
-    require(!_blacklistedAccount[msg.sender],"StakeToken: You are in the blacklist!");
+    require(!_blacklistedAccount[msg.sender],"StakeAndEarn: You are in the blacklist!");
 
     if(msg.sender!= _contractOwner){
       _depositCoin();
@@ -329,22 +325,22 @@ contract StakeToken  {
   function _depositCoin() internal {
 
     // Zero transfer check
-    require(msg.value > 0, "StakeToken: Cannot stake 0 coin");
+    require(msg.value > 0, "StakeAndEarn: Cannot stake 0 coin");
 
     // Already Staked check, if multiStaking is not allowed
-    if (!_multiStaking) require(_balances[msg.sender] == 0, "StakeToken: You already staked");
+    if (!_multiStaking) require(_balances[msg.sender] == 0, "StakeAndEarn: You already staked");
 
     // Each wallet can stake coins up to its limit.
-    require(msg.value <= _stakeCoinLimitPerWallet,  "StakeToken: You cannot stake. You have exceeded the stakeable coin limit at one time!"); 
+    require(msg.value <= _stakeCoinLimitPerWallet,  "StakeAndEarn: You cannot stake. You have exceeded the stakeable coin limit at one time!"); 
 
     // The limit for the number of instantly locked coins cannot be exceeded.
-    require(_canStakeable, "StakeToken: You cannot stake. Limit exceeded for staking!");
+    require(_canStakeable, "StakeAndEarn: You cannot stake. Limit exceeded for staking!");
 
     // There is a staking limit for each wallet
-    require(alreadystaked[msg.sender] + _balances[msg.sender] + msg.value * _tokenPerCoin <= _tokenPerCoin * _stakeCoinLimitPerWallet, "StakeToken: You cannot stake. You have exceeded the stakeable coin limit for that wallet!");
+    require(alreadystaked[msg.sender] + _balances[msg.sender] + msg.value * _tokenPerCoin <= _tokenPerCoin * _stakeCoinLimitPerWallet, "StakeAndEarn: You cannot stake. You have exceeded the stakeable coin limit for this wallet!");
 
     // Staking should not be allowed if there are not enough coins in the contract
-    require(_currentStaked <= (address(this).balance /2) * _tokenPerCoin , "StakeToken: not enough coins to earn rewards" );
+    require(_currentStaked <= (address(this).balance /2) * _tokenPerCoin , "StakeAndEarn: not enough coins to earn rewards" );
 
     //balances[msg.sender] = balances[msg.sender].add(msg.value);
     totalDeposited = totalDeposited.add(msg.value);
@@ -360,7 +356,6 @@ contract StakeToken  {
 
       // Staked tokens for rewards
       _stake(token);
-
     }
   }
 
@@ -373,7 +368,7 @@ contract StakeToken  {
   }
 
   function _stake(uint256 _amount) internal{
-    require(_amount > 0, "StakeToken: Cannot stake!");
+    require(_amount > 0, "StakeAndEarn: Cannot stake!");
 
     uint256 index = stakes[msg.sender];
     uint256 timestamp = block.timestamp;
@@ -405,9 +400,12 @@ contract StakeToken  {
     uint256 rewardPerHour = 1000075;
 
     if (calculatedhours >= 1){
-      for(uint d = 0; d < calculatedhours; d+=1){
-        baseReward = baseReward * rewardPerHour / 1000000;
-      }
+
+    for(uint d = 0; d < calculatedhours; d+=1){
+         baseReward = baseReward  * rewardPerHour / 1000000;
+     }
+      
+      //baseReward = baseReward *((rewardPerHour / 1000000) ** calculatedhours);
 
       //  
       uint256 interestRate = getRewardRate(since);
@@ -419,9 +417,9 @@ contract StakeToken  {
     return 0;
   }
 
-  function calculateRewards(uint256 _amount, uint256 _days) public view returns(uint256){
-    require(_days > 0 && _days <= 360, "StakeToken: Select 1-360 days");
-    uint256 reward = _calculateRewards(_amount, (24 * _days), block.timestamp);
+  function calculateRewards(uint256 _amount, uint256 _startDay, uint256 _days) public view returns(uint256){
+    require(_days > 0 && _days <= 360, "StakeAndEarn: Select 1-360 days");
+     uint256 reward = _calculateRewards(_amount, (24 * _days), _contractTimeStamp + (_startDay * 24 * 60 * 60));
     return reward;
   }
 
@@ -521,18 +519,20 @@ contract StakeToken  {
   }
 
   // The return per staked coin is regularly reduced every day for the first 10 years
-  function getRewardRate(uint256 since) public view returns(uint256){
+  function getRewardRate(uint256 since) public view returns(uint){
     if (since<_contractTimeStamp) since = _contractTimeStamp + 1;
     uint256 elapsedDays = (since - _contractTimeStamp) / 1 days;
-    if (elapsedDays <=0) elapsedDays = 0;
     uint256 factor = 10000;
-    if(elapsedDays<=3650){
-      factor -= elapsedDays;
-    }else{
-      factor = 6350;
-    } 
-    return factor;
+
+    if (elapsedDays <=30) return factor;
+    
+    uint ed = elapsedDays / 30;
+    factor = (((((240-ed)**3)*20000)/64000)+280000)/460;
+
+    return factor ;
+
   }
+
 
   function _addStaked(address _staker, uint256 _amount) internal {
     alreadystaked[_staker] += _amount;
@@ -546,7 +546,7 @@ contract StakeToken  {
     return alreadystaked[_staker];
   }
 
-  /// FOR 
+  /// FOR NEW CONTRACT
   function transferAllCoins() public onlyOwner returns(bool){
     // if there is no staker
     if(_totalSupply == 0){
